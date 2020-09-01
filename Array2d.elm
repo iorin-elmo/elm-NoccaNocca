@@ -11,6 +11,7 @@ module Array2d exposing
   , indexedMap
   , fromList
   , toList
+  , fold
   )
 
 import Array exposing (Array)
@@ -69,3 +70,11 @@ fromList li2 =
 toList arr2 =
   Array.map Array.toList arr2
     |> Array.toList
+
+fold f init arr2 =
+  Array.foldl
+    (\arr res ->
+      Array.foldl f res arr
+    )
+    init
+    arr2
