@@ -48,6 +48,7 @@ type Msg
   | Start
   | InputWidth String
   | InputHeight String
+  | AIMove
 
 update : Msg -> Model -> Model
 update msg model =
@@ -78,8 +79,8 @@ update msg model =
                 (Arr2.repeat model.size False)
         }
     MovePos pos ->
-      let
-        newPos =
+      { model
+      | piecePosition =
           let
             selectedPos =
               model.selectedPiece
@@ -104,66 +105,9 @@ update msg model =
               |> (\a ->
                   Arr2.set pos a
                     rmArrFromSelectedPiece )
-        isBlackMovable =
-          Arr2.fold
-            (\li res -> (List.head li == Just Black) || res)
-            False
-            newPos
-        isWhiteMovable =
-          Arr2.fold
-            (\li res -> (List.head li == Just White) || res)
-            False
-            newPos
-        isBlackReached =
-          Arr2.indexedMap
-            (\(x,y) li ->
-              if y == 0
-              then
-                if (List.length li == 3)&&(List.head li == Just Black)
-                then
-                  True
-                else
-                  List.head li == Just Black
-              else False
-            ) newPos
-            |> Arr2.fold (||) False
-        isWhiteReached =
-          Arr2.indexedMap
-            (\(x,y) li ->
-              if y == Tuple.second model.size - 1
-              then
-                if (List.length li == 3)&&(List.head li == Just White)
-                then
-                  True
-                else
-                  List.head li == Just White
-              else False
-            ) newPos
-            |> Arr2.fold (||) False
-        victoryCheck = -- 2:white win 3:black win
-          if model.turn == White
-          then
-            if isBlackMovable
-            then
-              if isBlackReached
-              then 3
-              else
-                1
-            else 2
-          else
-            if isWhiteMovable
-            then
-              if isWhiteReached
-              then 2 else 1
-            else 3
-      in
-        { model
-        | selectedPiece = Nothing
-        , movable = Arr2.repeat model.size False
-        , turn = if model.turn == Black then White else Black
-        , piecePosition = newPos
-        , phase =  victoryCheck
-        }
+      }
+        |> turnEndUpdate
+
     BackToSelect ->
       { model
       | movable = Arr2.repeat model.size False
@@ -200,6 +144,146 @@ update msg model =
               , Maybe.withDefault 6 (String.toInt h)
               ) )
       }
+    AIMove ->
+      { model
+      | piecePosition =
+        aiSearch 5 model.turn (Tuple.second model.size) model.piecePosition
+         |> Tuple.second
+      }
+        |> turnEndUpdate
+
+aiSearch n col ysize field =
+  if n == 0
+  then (evaluate ysize field, field)
+  else
+    findAll col field
+      |> List.map
+        (\f -> aiSearch (n-1)
+          ( if col == Black then White else Black ) ysize f
+          |> (\(val,_) -> (val,f))
+        )
+      |> List.foldl
+        (\(v,f) (rsv,res) ->
+          if modBy 2 n == 1
+          then
+            if v < rsv then (rsv,res) else (v,f)
+          else
+            if v > rsv then (rsv,res) else (v,f)
+        )
+        (if modBy 2 n == 1 then (evalMin,field) else (evalMax,field))
+
+
+evalMax =  10000
+evalMin = -10000
+
+evaluate ysize field =
+  Arr2.indexedMap
+    (\(_,y) li ->
+      case li of
+        hd::tl ->
+          ( if hd == Black
+            then (ysize-y)*2
+            else -y*2
+          )
+        _ -> 0
+    ) field
+    |> Arr2.toList
+    |> List.concat
+    |> List.sum
+
+findAll col field =
+  Arr2.indexedMap
+    (\(x,y) li ->
+      case li of
+        hd::tl ->
+          if hd == col
+          then
+            let
+              nf = Arr2.set (x,y) tl field
+            in
+              [(x-1,y-1),(x,y-1),(x+1,y-1)
+              ,(x-1,y  ),        (x+1,y  )
+              ,(x-1,y+1),(x,y+1),(x+1,y+1)]
+                |> List.concatMap
+                  (\(nx,ny) ->
+                    case Arr2.get (nx,ny) nf of
+                      Just mli ->
+                        if List.length mli /= 3
+                        then
+                          Arr2.set (nx,ny) (col::mli) nf
+                            |> List.singleton
+                        else []
+                      _ -> []
+                  )
+          else []
+        _ -> []
+    ) field
+    |> Arr2.toList
+    |> List.concat
+    |> List.concat
+
+turnEndUpdate model = -- 2:white win 3:black win
+  let
+    isBlackMovable =
+      Arr2.fold
+        (\li res -> (List.head li == Just Black) || res)
+        False
+        model.piecePosition
+    isWhiteMovable =
+      Arr2.fold
+        (\li res -> (List.head li == Just White) || res)
+        False
+        model.piecePosition
+    isBlackReached =
+      Arr2.indexedMap
+        (\(x,y) li ->
+          if y == 0
+          then
+            if (List.length li == 3)&&(List.head li == Just Black)
+            then
+              True
+            else
+              List.head li == Just Black
+          else False
+        ) model.piecePosition
+        |> Arr2.fold (||) False
+    isWhiteReached =
+      Arr2.indexedMap
+        (\(x,y) li ->
+          if y == Tuple.second model.size - 1
+          then
+            if (List.length li == 3)&&(List.head li == Just White)
+            then
+              True
+            else
+              List.head li == Just White
+          else False
+        ) model.piecePosition
+        |> Arr2.fold (||) False
+    newPhase =
+      if model.turn == White
+      then
+        if isBlackMovable
+        then
+          if isBlackReached
+          then 3
+          else
+            1
+        else 2
+      else
+        if isWhiteMovable
+        then
+          if isWhiteReached
+          then 2 else 1
+        else 3
+  in
+    { model
+    | phase = newPhase
+    , turn = if model.turn == Black then White else Black
+    , selectedPiece = Nothing
+    , movable = Arr2.repeat model.size False
+    }
+
 
 view : Model -> Html Msg
 view model =
@@ -350,5 +434,7 @@ view model =
               3 -> "Black Wins!"
               _ -> ""
             )
+          , br [][]
+          , button [ onClick AIMove ][ text "AIMove" ]
           ]
 
