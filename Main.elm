@@ -147,21 +147,18 @@ update msg model =
     AIMove ->
       { model
       | piecePosition =
-        aiSearch 5 model.turn (Tuple.second model.size) model.piecePosition
+        aiSearch 5 model.turn model.size model.piecePosition evalMax evalMin
          |> Tuple.second
       }
         |> turnEndUpdate
 
-aiSearch n col ysize field =
+aiSearch n col size field minEnd maxEnd =
   if n == 0
-  then (evaluate ysize field, field)
+  then (evaluate col size field, field)
   else
     findAll col field
-      |> List.map
-        (\f -> aiSearch (n-1)
-          ( if col == Black then White else Black ) ysize f
-          |> (\(val,_) -> (val,f))
-        )
+      |> List.map (\f -> (evaluate col size f,f))
+
       |> List.foldl
         (\(v,f) (rsv,res) ->
           if modBy 2 n == 1
@@ -171,26 +168,64 @@ aiSearch n col ysize field =
             if v > rsv then (rsv,res) else (v,f)
         )
         (if modBy 2 n == 1 then (evalMin,field) else (evalMax,field))
+      |> (\(_,f) ->  aiSearch (n-1) (if col==Black then White else Black) size f)
+      --|> List.map
+      --  (\(v,f) ->
+      --    if v == evalMin || v == evalMax
+      --    then
+      --      (v,f)
+      --    else
+      --      aiSearch (n-1)
+      --      ( if col == Black then White else Black ) size f
+      --        |> (\(val,_) -> (val,f))
+      --  )
+      --|> List.foldl
+      --  (\(v,f) (rsv,res) ->
+      --    if modBy 2 n == 1
+      --    then
+      --      if v < rsv then (rsv,res) else (v,f)
+      --    else
+      --      if v > rsv then (rsv,res) else (v,f)
+      --  )
+      --  (if modBy 2 n == 1 then (evalMin,field) else (evalMax,field))
 
 
 evalMax =  10000
 evalMin = -10000
+fib n = if n<2 then 1 else fib (n-1) + fib (n-2)
 
-evaluate ysize field =
-  Arr2.indexedMap
-    (\(_,y) li ->
-      case li of
-        hd::tl ->
-          ( if hd == Black
-            then (ysize-y)*2
-            else -y*2
-          )
-        _ -> 0
-    ) field
-    |> Arr2.toList
-    |> List.concat
-    |> List.sum
+evaluate : Piece -> (Int,Int) -> Array2d (List Piece) -> Int
+evaluate col size field =
+  let
+    vicCheck =
+      { init
+      | size = size
+      , turn = col
+      , piecePosition = field
+      }
+      |> turnEndUpdate
+  in
+    case vicCheck.phase of
+      2 -> evalMin
+      3 -> evalMax
+      _ ->
+        Arr2.indexedMap
+          (\(_,y) li ->
+            case li of
+              hd::tl ->
+                ( if hd == Black
+                  then
+                    if y == 0 then 100 else (Tuple.second size-y)^2
+                  else
+                    if y == Tuple.second size - 1 then -100 else -((y+1)^2)
+                )
+              _ -> 0
+          ) field
+          |> Arr2.toList
+          |> List.concat
+          |> List.sum
 
+findAll : Piece -> Array2d (List Piece) -> List (Array2d (List Piece))
 findAll col field =
   Arr2.indexedMap
     (\(x,y) li ->
@@ -201,9 +236,9 @@ findAll col field =
             let
               nf = Arr2.set (x,y) tl field
             in
-              [(x-1,y-1),(x,y-1),(x+1,y-1)
-              ,(x-1,y  ),        (x+1,y  )
-              ,(x-1,y+1),(x,y+1),(x+1,y+1)]
+              [ (x-1,y-1),(x,y-1),(x+1,y-1)
+              , (x-1,y  ),        (x+1,y  )
+              , (x-1,y+1),(x,y+1),(x+1,y+1) ]
                 |> List.concatMap
                   (\(nx,ny) ->
                     case Arr2.get (nx,ny) nf of
